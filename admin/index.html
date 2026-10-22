@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>ILAALO Admin</title>
+<style>
+  :root { --bg:#0A1220; --card:#121C2E; --bd:#1E2B42; --tx:#E6EEF8; --mut:#8A97AD; --pri:#2F6FED; --acc:#22D3EE; --ok:#22C55E; --bad:#EF4444; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--tx); font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  main { max-width:900px; margin:0 auto; padding:20px 16px 60px; }
+  .eyebrow { color:var(--acc); font-size:12px; letter-spacing:.12em; margin:8px 0 0; }
+  h1 { margin:4px 0; font-size:34px; }
+  h2 { margin:0 0 6px; }
+  .sub { color:var(--mut); margin:0 0 18px; }
+  .card { background:var(--card); border:1px solid var(--bd); border-radius:16px; padding:18px; margin-bottom:14px; }
+  label { display:block; font-size:13px; color:var(--mut); margin:12px 0 4px; }
+  input[type=email], input[type=password], input[type=text] { width:100%; padding:12px; border-radius:10px; border:1px solid var(--bd); background:var(--bg); color:var(--tx); font-size:15px; }
+  button { cursor:pointer; border:0; border-radius:10px; padding:10px 14px; font-size:14px; font-weight:600; color:#fff; background:var(--pri); }
+  button.ok { background:#15803d; }
+  button.bad { background:transparent; border:1px solid var(--bad); color:var(--bad); }
+  button.ghost { background:transparent; border:1px solid var(--bd); color:var(--tx); }
+  button:disabled { opacity:.5; cursor:default; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .space { justify-content:space-between; }
+  .tabs { display:flex; gap:8px; margin:14px 0; }
+  .tab { background:var(--card); border:1px solid var(--bd); color:var(--tx); }
+  .tab.on { background:var(--pri); border-color:var(--pri); }
+  .kv { display:grid; grid-template-columns:150px 1fr; gap:6px 12px; margin:12px 0; font-size:14px; }
+  .kv > :nth-child(odd) { color:var(--mut); }
+  .badge { display:inline-block; padding:2px 10px; border-radius:99px; font-size:12px; font-weight:700; }
+  .b-active { background:#14532d; color:#86efac; }
+  .b-trial { background:#1e3a8a; color:#93c5fd; }
+  .b-pending { background:#78350f; color:#fcd34d; }
+  .b-expired, .b-suspended { background:#7f1d1d; color:#fca5a5; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:10px 8px; border-bottom:1px solid var(--bd); vertical-align:top; }
+  th { color:var(--mut); font-weight:600; font-size:12px; }
+  .scroll { overflow-x:auto; }
+  .hidden { display:none; }
+  .msg { margin-top:10px; font-size:13px; min-height:18px; }
+  .err { color:var(--bad); }
+  .mut { color:var(--mut); }
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">SUBSCRIPTION ADMIN</p>
+  <h1>ILAALO</h1>
+  <p class="sub">Review payments, approve subscriptions and manage customers.</p>
+
+  <section id="login" class="card">
+    <h2>Admin Sign In</h2>
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="username">
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password">
+    <div class="row" style="margin-top:14px"><button id="signin">Sign In</button></div>
+    <div id="loginMsg" class="msg err"></div>
+  </section>
+
+  <section id="panel" class="hidden">
+    <div class="card row space">
+      <div><div class="mut">Signed in as</div><div id="who"></div></div>
+      <div class="row">
+        <button class="ghost" id="refresh">Refresh</button>
+        <button class="ghost" id="signout">Sign out</button>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab on" id="tabPending">Pending</button>
+      <button class="tab" id="tabCustomers">Customers</button>
+    </div>
+
+    <div id="pendingView"></div>
+
+    <div id="customersView" class="hidden">
+      <div class="card"><input id="search" type="text" placeholder="Search email or name"></div>
+      <div class="card scroll">
+        <table>
+          <thead><tr><th>Email</th><th>Name / Plan</th><th>Status</th><th>Valid until</th><th></th></tr></thead>
+          <tbody id="customersBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="panelMsg" class="msg"></div>
+  </section>
+</main>
+
+<script>
+  // Furahan waa "publishable key": waa ammaan in la geliyo bogga. Xogta waxaa ilaaliya Supabase (admin kaliya).
+  const SUPABASE_URL = 'https://seldczgvowsyhlgjlvfw.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_KU4zoirCKCGuBzb7gw2SCQ_wMpTB88a';
+
+  const PLANS = {
+    monthly_10:    { label: '1 month',  price: 10 },
+    quarterly_30:  { label: '3 months', price: 30 },
+    semiannual_60: { label: '6 months', price: 60 },
+    yearly_120:    { label: '1 year',   price: 120 }
+  };
+
+  let token = null;
+  let customers = [];
+
+  const $ = (id) => document.getElementById(id);
+
+  // Samee element si ammaan ah (qoraalka macmiilku geliyo ma noqdo HTML)
+  function h(tag, props, ...children) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(props || {})) {
+      if (k === 'class') e.className = v;
+      else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+      else e.setAttribute(k, v);
+    }
+    for (const c of children.flat()) {
+      if (c === null || c === undefined) continue;
+      e.append(c.nodeType ? c : document.createTextNode(String(c)));
+    }
+    return e;
+  }
+
+  async function request(path, options) {
+    const headers = { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = 'Bearer ' + token;
+    const res = await fetch(SUPABASE_URL + path, Object.assign({}, options, { headers }));
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch (_) {}
+    if (!res.ok) {
+      const message = (data && (data.message || data.msg || data.error_description || data.error)) || ('HTTP ' + res.status);
+      const err = new Error(message);
+      err.status = res.status;
+      throw err;
+    }
+    return data;
+  }
+
+  const rpc = (name, args) =>
+    request('/rest/v1/rpc/' + name, { method: 'POST', body: JSON.stringify(args || {}) });
+
+  function setMsg(text, isError) {
+    const m = $('panelMsg');
+    m.textContent = text || '';
+    m.className = 'msg' + (isError ? ' err' : '');
+  }
+
+  function fmtDate(ms) {
+    return ms ? new Date(ms).toLocaleDateString() : '-';
+  }
+
+  function stateOf(c) {
+    const now = Date.now();
+    const paid = c.paid_until ? Date.parse(c.paid_until) : null;
+    const trial = c.trial_ends_at ? Date.parse(c.trial_ends_at) : 0;
+    if (c.status === 'suspended') return { key: 'suspended', text: 'Suspended', until: null };
+    if (c.status === 'active' && (paid === null || now < paid)) return { key: 'active', text: 'Active', until: paid };
+    if (now < trial) return { key: 'trial', text: 'Trial', until: trial };
+    if (c.status === 'pending') return { key: 'pending', text: 'Pending', until: null };
+    return { key: 'expired', text: 'Expired', until: trial };
+  }
+
+  async function signIn() {
+    $('loginMsg').textContent = '';
+    const email = $('email').value.trim();
+    const password = $('password').value;
+    if (!email || !password) { $('loginMsg').textContent = 'Enter your email and password.'; return; }
+    $('signin').disabled = true;
+    try {
+      const data = await request('/auth/v1/token?grant_type=password', {
+        method: 'POST',
+        body: JSON.stringify({ email: email, password: password })
+      });
+      token = data.access_token;
+      const isAdmin = await rpc('is_admin');
+      if (isAdmin !== true) throw new Error('This account is not an admin.');
+      $('password').value = '';
+      $('who').textContent = email;
+      $('login').classList.add('hidden');
+      $('panel').classList.remove('hidden');
+      await load();
+    } catch (e) {
+      token = null;
+      $('loginMsg').textContent = e.message;
+    }
+    $('signin').disabled = false;
+  }
+
+  function signOut() {
+    token = null;
+    customers = [];
+    $('panel').classList.add('hidden');
+    $('login').classList.remove('hidden');
+  }
+
+  function handleError(e) {
+    if (e.status === 401 || e.status === 403) {
+      signOut();
+      $('loginMsg').textContent = 'Session expired. Please sign in again.';
+      return;
+    }
+    setMsg(e.message, true);
+  }
+
+  async function load() {
+    setMsg('Loading...');
+    try {
+      customers = (await rpc('admin_customers')) || [];
+      setMsg('');
+      render();
+    } catch (e) {
+      handleError(e);
+    }
+  }
+
+  function render() {
+    const pending = customers.filter((c) => c.status === 'pending');
+    $('tabPending').textContent = 'Pending (' + pending.length + ')';
+    $('tabCustomers').textContent = 'Customers (' + customers.length + ')';
+    renderPending(pending);
+    renderCustomers();
+  }
+
+  function renderPending(list) {
+    const box = $('pendingView');
+    box.replaceChildren();
+    if (!list.length) {
+      box.append(h('div', { class: 'card mut' }, 'No payments are waiting for approval.'));
+      return;
+    }
+    for (const c of list) {
+      const plan = PLANS[c.plan] || { label: c.plan || '-', price: '?' };
+      box.append(
+        h('div', { class: 'card' },
+          h('div', { class: 'row space' },
+            h('strong', {}, c.email),
+            h('span', { class: 'badge b-pending' }, 'Pending')
+          ),
+          h('div', { class: 'kv' },
+            h('span', {}, 'Name'), h('span', {}, c.full_name || '-'),
+            h('span', {}, 'Plan'), h('span', {}, plan.label),
+            h('span', {}, 'Expected amount'), h('span', {}, '$' + plan.price),
+            h('span', {}, 'Payment reference'),
+            h('span', {}, (c.pay_ref || '-') + ' ',
+              h('button', { class: 'ghost', onclick: () => copyText(c.pay_ref) }, 'Copy')),
+            h('span', {}, 'Account created'), h('span', {}, fmtDate(Date.parse(c.created_at)))
+          ),
+          h('div', { class: 'row' },
+            h('button', { class: 'ok', onclick: () => approve(c) }, 'Approve'),
+            h('button', { class: 'bad', onclick: () => reject(c) }, 'Reject')
+          )
+        )
+      );
+    }
+  }
+
+  function renderCustomers() {
+    const q = $('search').value.trim().toLowerCase();
+    const body = $('customersBody');
+    body.replaceChildren();
+    const list = customers.filter((c) =>
+      !q || (c.email || '').toLowerCase().includes(q) || (c.full_name || '').toLowerCase().includes(q));
+    if (!list.length) {
+      body.append(h('tr', {}, h('td', { colspan: '5', class: 'mut' }, 'No customers found.')));
+      return;
+    }
+    for (const c of list) {
+      const s = stateOf(c);
+      const planLabel = PLANS[c.plan] ? PLANS[c.plan].label : (c.plan || '-');
+      const suspended = c.status === 'suspended';
+      body.append(
+        h('tr', {},
+          h('td', {}, c.email),
+          h('td', {}, c.full_name || '-', h('div', { class: 'mut' }, planLabel)),
+          h('td', {}, h('span', { class: 'badge b-' + s.key }, s.text)),
+          h('td', {}, fmtDate(s.until)),
+          h('td', {},
+            suspended
+              ? h('button', { class: 'ghost', onclick: () => suspend(c, false) }, 'Resume')
+              : h('button', { class: 'bad', onclick: () => suspend(c, true) }, 'Suspend'))
+        )
+      );
+    }
+  }
+
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text || ''); setMsg('Copied.'); } catch (_) { setMsg('Could not copy.', true); }
+  }
+
+  async function act(fn, doneText) {
+    setMsg('Working...');
+    try {
+      await fn();
+      await load();
+      setMsg(doneText);
+    } catch (e) {
+      handleError(e);
+    }
+  }
+
+  function approve(c) {
+    const plan = PLANS[c.plan] ? PLANS[c.plan].label + ' ($' + PLANS[c.plan].price + ')' : c.plan;
+    if (!confirm('Approve ' + c.email + ' for ' + plan + '?\nPayment reference: ' + (c.pay_ref || '-'))) return;
+    act(() => rpc('admin_approve', { p_user: c.user_id }), 'Approved.');
+  }
+
+  function reject(c) {
+    if (!confirm('Reject the payment from ' + c.email + '?')) return;
+    act(() => rpc('admin_reject', { p_user: c.user_id }), 'Rejected.');
+  }
+
+  function suspend(c, on) {
+    const q = on ? 'Suspend ' : 'Resume ';
+    if (!confirm(q + c.email + '?')) return;
+    act(() => rpc('admin_suspend', { p_user: c.user_id, p_on: on }), on ? 'Suspended.' : 'Resumed.');
+  }
+
+  function showTab(name) {
+    $('pendingView').classList.toggle('hidden', name !== 'pending');
+    $('customersView').classList.toggle('hidden', name !== 'customers');
+    $('tabPending').classList.toggle('on', name === 'pending');
+    $('tabCustomers').classList.toggle('on', name === 'customers');
+  }
+
+  $('signin').addEventListener('click', signIn);
+  $('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') signIn(); });
+  $('signout').addEventListener('click', signOut);
+  $('refresh').addEventListener('click', load);
+  $('tabPending').addEventListener('click', () => showTab('pending'));
+  $('tabCustomers').addEventListener('click', () => showTab('customers'));
+  $('search').addEventListener('input', renderCustomers);
+</script>
+</body>
+</html>
