@@ -1,6 +1,6 @@
 {
-  "version": "1.0.3",
-  "build": 4,
+  "version": "1.0.2",
+  "build": 3,
   "min_build": 1,
   "url": "https://github.com/ilaalo-app-so/ILAALO/releases/latest/download/ilaalo.apk",
   "notes": "Active balance check, continuous sweeping, forgot password."
