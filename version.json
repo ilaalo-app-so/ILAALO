@@ -1,1 +1,1 @@
-{"version":"1.0.4","build":5,"min_build":1,"url":"https://github.com/ilaalo-app-so/ILAALO/releases/latest/download/ilaalo.apk","notes":"Small amounts from $0.10 are now transferred. The app opens offline. Dashboard shows decimal amounts."}
+{"version":"1.0.5","build":6,"min_build":1,"url":"https://github.com/ilaalo-app-so/ILAALO/releases/latest/download/ilaalo.apk","notes":"Offline transfers now show on the Dashboard. Small amounts from $0.10. Accessibility warning. USSD error dialogs auto-close."}
