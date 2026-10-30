@@ -9,7 +9,7 @@
   :root { --bg:#0A1220; --card:#121C2E; --bd:#1E2B42; --tx:#E6EEF8; --mut:#8A97AD; --pri:#2F6FED; --acc:#22D3EE; --ok:#22C55E; --bad:#EF4444; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--tx); font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
-  main { max-width:900px; margin:0 auto; padding:20px 16px 60px; }
+  main { max-width:1000px; margin:0 auto; padding:20px 16px 60px; }
   .eyebrow { color:var(--acc); font-size:12px; letter-spacing:.12em; margin:8px 0 0; }
   h1 { margin:4px 0; font-size:34px; }
   h2 { margin:0 0 6px; }
@@ -21,19 +21,20 @@
   button.ok { background:#15803d; }
   button.bad { background:transparent; border:1px solid var(--bad); color:var(--bad); }
   button.ghost { background:transparent; border:1px solid var(--bd); color:var(--tx); }
+  button.sm { padding:6px 10px; font-size:13px; }
   button:disabled { opacity:.5; cursor:default; }
   .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .space { justify-content:space-between; }
-  .tabs { display:flex; gap:8px; margin:14px 0; }
+  .tabs { display:flex; gap:8px; margin:14px 0; flex-wrap:wrap; }
   .tab { background:var(--card); border:1px solid var(--bd); color:var(--tx); }
   .tab.on { background:var(--pri); border-color:var(--pri); }
   .kv { display:grid; grid-template-columns:150px 1fr; gap:6px 12px; margin:12px 0; font-size:14px; }
   .kv > :nth-child(odd) { color:var(--mut); }
   .badge { display:inline-block; padding:2px 10px; border-radius:99px; font-size:12px; font-weight:700; }
-  .b-active { background:#14532d; color:#86efac; }
+  .b-active, .b-approved { background:#14532d; color:#86efac; }
   .b-trial { background:#1e3a8a; color:#93c5fd; }
   .b-pending { background:#78350f; color:#fcd34d; }
-  .b-expired, .b-suspended { background:#7f1d1d; color:#fca5a5; }
+  .b-expired, .b-suspended, .b-rejected { background:#7f1d1d; color:#fca5a5; }
   table { width:100%; border-collapse:collapse; font-size:14px; }
   th, td { text-align:left; padding:10px 8px; border-bottom:1px solid var(--bd); vertical-align:top; }
   th { color:var(--mut); font-weight:600; font-size:12px; }
@@ -42,13 +43,22 @@
   .msg { margin-top:10px; font-size:13px; min-height:18px; }
   .err { color:var(--bad); }
   .mut { color:var(--mut); }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; margin-bottom:14px; }
+  .stat { background:var(--card); border:1px solid var(--bd); border-radius:14px; padding:12px 14px; }
+  .stat .n { font-size:24px; font-weight:700; }
+  .stat .l { color:var(--mut); font-size:12px; }
+  .money { font-size:30px; font-weight:800; }
+  tr.manage td { background:var(--bg); }
+  .manage-in { position:sticky; left:0; max-width:calc(100vw - 72px); }
+  .left-low { color:#fcd34d; }
+  .left-zero { color:var(--bad); }
 </style>
 </head>
 <body>
 <main>
   <p class="eyebrow">SUBSCRIPTION ADMIN</p>
   <h1>ILAALO</h1>
-  <p class="sub">Review payments, approve subscriptions and manage customers.</p>
+  <p class="sub">Review payments, manage customers and see revenue.</p>
 
   <section id="login" class="card">
     <h2>Admin Sign In</h2>
@@ -69,9 +79,13 @@
       </div>
     </div>
 
+    <div id="stats" class="stats"></div>
+
     <div class="tabs">
       <button class="tab on" id="tabPending">Pending</button>
       <button class="tab" id="tabCustomers">Customers</button>
+      <button class="tab" id="tabRevenue">Revenue</button>
+      <button class="tab" id="tabLog">Log</button>
     </div>
 
     <div id="pendingView"></div>
@@ -80,11 +94,14 @@
       <div class="card"><input id="search" type="text" placeholder="Search email or name"></div>
       <div class="card scroll">
         <table>
-          <thead><tr><th>Email</th><th>Name / Plan</th><th>Status</th><th>Valid until</th><th></th></tr></thead>
+          <thead><tr><th>Email</th><th>Name / Plan</th><th>Status</th><th>Valid until</th><th>Left</th><th></th></tr></thead>
           <tbody id="customersBody"></tbody>
         </table>
       </div>
     </div>
+
+    <div id="revenueView" class="hidden"></div>
+    <div id="logView" class="hidden"></div>
 
     <div id="panelMsg" class="msg"></div>
   </section>
@@ -104,6 +121,10 @@
 
   let token = null;
   let customers = [];
+  let payments = [];
+  let revenue = null;
+  let logRows = [];
+  let openRow = null;
 
   const $ = (id) => document.getElementById(id);
 
@@ -150,6 +171,12 @@
   function fmtDate(ms) {
     return ms ? new Date(ms).toLocaleDateString() : '-';
   }
+  function fmtDateTime(iso) {
+    return iso ? new Date(iso).toLocaleString() : '-';
+  }
+  function money(n) {
+    return '$' + (Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
 
   function stateOf(c) {
     const now = Date.now();
@@ -160,6 +187,11 @@
     if (now < trial) return { key: 'trial', text: 'Trial', until: trial };
     if (c.status === 'pending') return { key: 'pending', text: 'Pending', until: null };
     return { key: 'expired', text: 'Expired', until: trial };
+  }
+
+  function daysLeft(s) {
+    if (!s.until || (s.key !== 'active' && s.key !== 'trial')) return null;
+    return Math.max(0, Math.ceil((s.until - Date.now()) / 86400000));
   }
 
   async function signIn() {
@@ -191,6 +223,9 @@
   function signOut() {
     token = null;
     customers = [];
+    payments = [];
+    revenue = null;
+    logRows = [];
     $('panel').classList.add('hidden');
     $('login').classList.remove('hidden');
   }
@@ -208,6 +243,10 @@
     setMsg('Loading...');
     try {
       customers = (await rpc('admin_customers')) || [];
+      // Waxyaabaha cusub (payments/revenue/log) waxay u baahan yihiin SQL-ka tallaabada 1.
+      try { payments = (await rpc('admin_payments')) || []; } catch (e) { if (e.status === 401 || e.status === 403) throw e; payments = []; }
+      try { revenue = await rpc('admin_revenue'); } catch (e) { if (e.status === 401 || e.status === 403) throw e; revenue = null; }
+      try { logRows = (await rpc('admin_get_log', { p_limit: 100 })) || []; } catch (e) { if (e.status === 401 || e.status === 403) throw e; logRows = []; }
       setMsg('');
       render();
     } catch (e) {
@@ -216,27 +255,89 @@
   }
 
   function render() {
-    const pending = customers.filter((c) => c.status === 'pending');
-    $('tabPending').textContent = 'Pending (' + pending.length + ')';
+    const byUser = new Map(customers.map((c) => [c.user_id, c]));
+    const newPending = payments.filter((p) => p.status === 'pending');
+    // Codsiyada hore (app-kii hore): profiles.status = pending oo aan payments ku lahayn
+    const refs = new Set(newPending.map((p) => (p.pay_ref || '').trim().toLowerCase()));
+    const legacy = customers.filter((c) => c.status === 'pending' && c.pay_ref
+      && !refs.has(String(c.pay_ref).trim().toLowerCase()));
+    const pendingCount = newPending.length + legacy.length;
+
+    $('tabPending').textContent = 'Pending (' + pendingCount + ')';
     $('tabCustomers').textContent = 'Customers (' + customers.length + ')';
-    renderPending(pending);
+
+    renderStats();
+    renderPending(newPending, legacy, byUser);
     renderCustomers();
+    renderRevenue();
+    renderLog();
   }
 
-  function renderPending(list) {
+  function renderStats() {
+    const counts = { active: 0, trial: 0, expired: 0, suspended: 0 };
+    for (const c of customers) {
+      const k = stateOf(c).key;
+      if (k === 'pending') counts.expired++;
+      else counts[k] = (counts[k] || 0) + 1;
+    }
+    const box = $('stats');
+    box.replaceChildren();
+    const items = [
+      ['Customers', customers.length],
+      ['Active', counts.active],
+      ['Trial', counts.trial],
+      ['Expired', counts.expired],
+      ['Suspended', counts.suspended],
+      ['Revenue (month)', revenue ? money(revenue.month) : '-']
+    ];
+    for (const [l, n] of items) {
+      box.append(h('div', { class: 'stat' }, h('div', { class: 'n' }, n), h('div', { class: 'l' }, l)));
+    }
+  }
+
+  function renderPending(list, legacy, byUser) {
     const box = $('pendingView');
     box.replaceChildren();
-    if (!list.length) {
+    if (!list.length && !legacy.length) {
       box.append(h('div', { class: 'card mut' }, 'No payments are waiting for approval.'));
       return;
     }
-    for (const c of list) {
+    for (const p of list) {
+      const c = byUser.get(p.user_id);
+      const s = c ? stateOf(c) : null;
+      const plan = PLANS[p.plan] || { label: p.plan || '-', price: '?' };
+      box.append(
+        h('div', { class: 'card' },
+          h('div', { class: 'row space' },
+            h('strong', {}, p.email),
+            h('span', { class: 'badge b-pending' }, 'Pending')
+          ),
+          h('div', { class: 'kv' },
+            h('span', {}, 'Name'), h('span', {}, p.full_name || '-'),
+            h('span', {}, 'Plan'), h('span', {}, plan.label),
+            h('span', {}, 'Amount'), h('span', {}, money(p.amount)),
+            h('span', {}, 'Payment reference'),
+            h('span', {}, (p.pay_ref || '-') + ' ',
+              h('button', { class: 'ghost sm', onclick: () => copyText(p.pay_ref) }, 'Copy')),
+            h('span', {}, 'Customer now'),
+            h('span', {}, s ? s.text + (daysLeft(s) !== null ? ' (' + daysLeft(s) + ' days left)' : '') : '-'),
+            h('span', {}, 'Sent'), h('span', {}, fmtDateTime(p.created_at))
+          ),
+          h('div', { class: 'mut', style: 'font-size:13px' }, 'Approving adds the time on top of what the customer still has left.'),
+          h('div', { class: 'row', style: 'margin-top:10px' },
+            h('button', { class: 'ok', onclick: () => approvePayment(p) }, 'Approve'),
+            h('button', { class: 'bad', onclick: () => rejectPayment(p) }, 'Reject')
+          )
+        )
+      );
+    }
+    for (const c of legacy) {
       const plan = PLANS[c.plan] || { label: c.plan || '-', price: '?' };
       box.append(
         h('div', { class: 'card' },
           h('div', { class: 'row space' },
             h('strong', {}, c.email),
-            h('span', { class: 'badge b-pending' }, 'Pending')
+            h('span', { class: 'badge b-pending' }, 'Pending (old app)')
           ),
           h('div', { class: 'kv' },
             h('span', {}, 'Name'), h('span', {}, c.full_name || '-'),
@@ -244,12 +345,11 @@
             h('span', {}, 'Expected amount'), h('span', {}, '$' + plan.price),
             h('span', {}, 'Payment reference'),
             h('span', {}, (c.pay_ref || '-') + ' ',
-              h('button', { class: 'ghost', onclick: () => copyText(c.pay_ref) }, 'Copy')),
-            h('span', {}, 'Account created'), h('span', {}, fmtDate(Date.parse(c.created_at)))
+              h('button', { class: 'ghost sm', onclick: () => copyText(c.pay_ref) }, 'Copy'))
           ),
           h('div', { class: 'row' },
-            h('button', { class: 'ok', onclick: () => approve(c) }, 'Approve'),
-            h('button', { class: 'bad', onclick: () => reject(c) }, 'Reject')
+            h('button', { class: 'ok', onclick: () => approveLegacy(c) }, 'Approve'),
+            h('button', { class: 'bad', onclick: () => rejectLegacy(c) }, 'Reject')
           )
         )
       );
@@ -263,26 +363,125 @@
     const list = customers.filter((c) =>
       !q || (c.email || '').toLowerCase().includes(q) || (c.full_name || '').toLowerCase().includes(q));
     if (!list.length) {
-      body.append(h('tr', {}, h('td', { colspan: '5', class: 'mut' }, 'No customers found.')));
+      body.append(h('tr', {}, h('td', { colspan: '6', class: 'mut' }, 'No customers found.')));
       return;
     }
     for (const c of list) {
       const s = stateOf(c);
+      const d = daysLeft(s);
       const planLabel = PLANS[c.plan] ? PLANS[c.plan].label : (c.plan || '-');
-      const suspended = c.status === 'suspended';
       body.append(
         h('tr', {},
           h('td', {}, c.email),
           h('td', {}, c.full_name || '-', h('div', { class: 'mut' }, planLabel)),
           h('td', {}, h('span', { class: 'badge b-' + s.key }, s.text)),
           h('td', {}, fmtDate(s.until)),
+          h('td', { class: d === null ? 'mut' : (d === 0 ? 'left-zero' : (d <= 3 ? 'left-low' : '')) },
+            d === null ? '-' : d + ' d'),
           h('td', {},
-            suspended
-              ? h('button', { class: 'ghost', onclick: () => suspend(c, false) }, 'Resume')
-              : h('button', { class: 'bad', onclick: () => suspend(c, true) }, 'Suspend'))
+            h('button', { class: 'ghost sm', onclick: () => { openRow = openRow === c.user_id ? null : c.user_id; renderCustomers(); } },
+              openRow === c.user_id ? 'Close' : 'Manage'))
         )
       );
+      if (openRow === c.user_id) body.append(manageRow(c));
     }
+  }
+
+  function manageRow(c) {
+    const suspended = c.status === 'suspended';
+    return h('tr', { class: 'manage' },
+      h('td', { colspan: '6' }, h('div', { class: 'manage-in' },
+        h('div', { class: 'kv' },
+          h('span', {}, 'Trial ends'), h('span', {}, fmtDate(c.trial_ends_at ? Date.parse(c.trial_ends_at) : null)),
+          h('span', {}, 'Paid until'), h('span', {}, fmtDate(c.paid_until ? Date.parse(c.paid_until) : null)),
+          h('span', {}, 'Account created'), h('span', {}, fmtDate(Date.parse(c.created_at)))
+        ),
+        h('div', { class: 'row' },
+          h('button', { class: 'ghost sm', onclick: () => extendTrial(c) }, 'Extend trial (days)'),
+          h('button', { class: 'ghost sm', onclick: () => endTrial(c) }, 'End trial now'),
+          h('button', { class: 'ghost sm', onclick: () => addPaidDays(c) }, 'Add subscription days'),
+          h('button', { class: 'ghost sm', onclick: () => setPaidUntil(c) }, 'Set subscription end date'),
+          h('button', { class: 'ghost sm', onclick: () => clearPaid(c) }, 'Remove subscription'),
+          suspended
+            ? h('button', { class: 'ok sm', onclick: () => suspend(c, false) }, 'Resume')
+            : h('button', { class: 'bad sm', onclick: () => suspend(c, true) }, 'Suspend')
+        )
+      ))
+    );
+  }
+
+  function renderRevenue() {
+    const box = $('revenueView');
+    box.replaceChildren();
+    if (!revenue) {
+      box.append(h('div', { class: 'card mut' }, 'Revenue is not available yet. Run the SQL setup first.'));
+      return;
+    }
+    box.append(
+      h('div', { class: 'stats' },
+        h('div', { class: 'stat' }, h('div', { class: 'money' }, money(revenue.today)), h('div', { class: 'l' }, 'Today')),
+        h('div', { class: 'stat' }, h('div', { class: 'money' }, money(revenue.month)), h('div', { class: 'l' }, 'This month')),
+        h('div', { class: 'stat' }, h('div', { class: 'money' }, money(revenue.total)), h('div', { class: 'l' }, 'All time (' + (revenue.count || 0) + ' payments)'))
+      )
+    );
+    const months = revenue.by_month || [];
+    box.append(
+      h('div', { class: 'card scroll' },
+        h('h2', {}, 'By month'),
+        months.length
+          ? h('table', {},
+              h('thead', {}, h('tr', {}, h('th', {}, 'Month'), h('th', {}, 'Revenue'))),
+              h('tbody', {}, months.map((m) => h('tr', {}, h('td', {}, m.m), h('td', {}, money(m.total))))))
+          : h('div', { class: 'mut' }, 'No approved payments yet.')
+      )
+    );
+    const done = payments.filter((p) => p.status !== 'pending');
+    box.append(
+      h('div', { class: 'card scroll' },
+        h('h2', {}, 'Payment history'),
+        done.length
+          ? h('table', {},
+              h('thead', {}, h('tr', {}, h('th', {}, 'Date'), h('th', {}, 'Customer'), h('th', {}, 'Plan'), h('th', {}, 'Amount'), h('th', {}, 'Reference'), h('th', {}, 'Result'))),
+              h('tbody', {}, done.map((p) => h('tr', {},
+                h('td', {}, fmtDateTime(p.reviewed_at || p.created_at)),
+                h('td', {}, p.email),
+                h('td', {}, (PLANS[p.plan] ? PLANS[p.plan].label : p.plan)),
+                h('td', {}, money(p.amount)),
+                h('td', {}, p.pay_ref),
+                h('td', {}, h('span', { class: 'badge b-' + p.status }, p.status))))))
+          : h('div', { class: 'mut' }, 'Nothing yet.')
+      )
+    );
+  }
+
+  const ACTION_TEXT = {
+    approve_payment: 'Payment approved',
+    reject_payment: 'Payment rejected',
+    extend_trial: 'Trial changed',
+    end_trial: 'Trial ended',
+    set_paid_until: 'Subscription date set',
+    add_paid_days: 'Subscription days added',
+    suspend: 'Suspended',
+    resume: 'Resumed'
+  };
+
+  function renderLog() {
+    const box = $('logView');
+    box.replaceChildren();
+    box.append(
+      h('div', { class: 'card scroll' },
+        h('h2', {}, 'Admin log'),
+        logRows.length
+          ? h('table', {},
+              h('thead', {}, h('tr', {}, h('th', {}, 'When'), h('th', {}, 'Action'), h('th', {}, 'Customer'), h('th', {}, 'Details'))),
+              h('tbody', {}, logRows.map((r) => h('tr', {},
+                h('td', {}, fmtDateTime(r.at)),
+                h('td', {}, ACTION_TEXT[r.action] || r.action),
+                h('td', {}, r.email || '-'),
+                h('td', { class: 'mut' }, r.detail ? JSON.stringify(r.detail) : '')))))
+          : h('div', { class: 'mut' }, 'No actions recorded yet.')
+      )
+    );
   }
 
   async function copyText(text) {
@@ -300,13 +499,36 @@
     }
   }
 
-  function approve(c) {
-    const plan = PLANS[c.plan] ? PLANS[c.plan].label + ' ($' + PLANS[c.plan].price + ')' : c.plan;
-    if (!confirm('Approve ' + c.email + ' for ' + plan + '?\nPayment reference: ' + (c.pay_ref || '-'))) return;
-    act(() => rpc('admin_approve', { p_user: c.user_id }), 'Approved.');
+  function askDays(text, allowNegative) {
+    const v = prompt(text);
+    if (v === null) return null;
+    const n = parseInt(v, 10);
+    if (!Number.isFinite(n) || n === 0 || (!allowNegative && n < 0) || Math.abs(n) > 3650) {
+      setMsg('Enter a whole number of days (1 to 3650).', true);
+      return null;
+    }
+    return n;
   }
 
-  function reject(c) {
+  function approvePayment(p) {
+    const plan = PLANS[p.plan] ? PLANS[p.plan].label + ' (' + money(p.amount) + ')' : p.plan;
+    if (!confirm('Approve ' + p.email + ' for ' + plan + '?\nPayment reference: ' + (p.pay_ref || '-'))) return;
+    act(() => rpc('admin_approve_payment', { p_id: p.id }), 'Approved.');
+  }
+
+  function rejectPayment(p) {
+    if (!confirm('Reject the payment from ' + p.email + '?')) return;
+    const note = prompt('Reason (optional):') || null;
+    act(() => rpc('admin_reject_payment', { p_id: p.id, p_note: note }), 'Rejected.');
+  }
+
+  function approveLegacy(c) {
+    const plan = PLANS[c.plan] ? PLANS[c.plan].label + ' ($' + PLANS[c.plan].price + ')' : c.plan;
+    if (!confirm('Approve ' + c.email + ' for ' + plan + '?\nPayment reference: ' + (c.pay_ref || '-'))) return;
+    act(() => rpc('admin_approve_legacy', { p_user: c.user_id }), 'Approved.');
+  }
+
+  function rejectLegacy(c) {
     if (!confirm('Reject the payment from ' + c.email + '?')) return;
     act(() => rpc('admin_reject', { p_user: c.user_id }), 'Rejected.');
   }
@@ -317,11 +539,44 @@
     act(() => rpc('admin_suspend', { p_user: c.user_id, p_on: on }), on ? 'Suspended.' : 'Resumed.');
   }
 
+  function extendTrial(c) {
+    const n = askDays('Add how many trial days for ' + c.email + '? (use a negative number to shorten)', true);
+    if (n === null) return;
+    act(() => rpc('admin_extend_trial', { p_user: c.user_id, p_days: n }), 'Trial updated.');
+  }
+
+  function endTrial(c) {
+    if (!confirm('End the free trial of ' + c.email + ' now?')) return;
+    act(() => rpc('admin_end_trial', { p_user: c.user_id }), 'Trial ended.');
+  }
+
+  function addPaidDays(c) {
+    const n = askDays('Add how many subscription days for ' + c.email + '?', false);
+    if (n === null) return;
+    act(() => rpc('admin_add_paid_days', { p_user: c.user_id, p_days: n }), 'Subscription days added.');
+  }
+
+  function setPaidUntil(c) {
+    const v = prompt('Subscription end date for ' + c.email + ' (YYYY-MM-DD):');
+    if (v === null) return;
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v.trim());
+    if (!m) { setMsg('Use the format YYYY-MM-DD.', true); return; }
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 23, 59, 0);
+    if (isNaN(d.getTime())) { setMsg('Invalid date.', true); return; }
+    act(() => rpc('admin_set_paid_until', { p_user: c.user_id, p_until: d.toISOString() }), 'Subscription date set.');
+  }
+
+  function clearPaid(c) {
+    if (!confirm('Remove the subscription of ' + c.email + '? (they go back to their trial status)')) return;
+    act(() => rpc('admin_set_paid_until', { p_user: c.user_id, p_until: null }), 'Subscription removed.');
+  }
+
   function showTab(name) {
-    $('pendingView').classList.toggle('hidden', name !== 'pending');
-    $('customersView').classList.toggle('hidden', name !== 'customers');
-    $('tabPending').classList.toggle('on', name === 'pending');
-    $('tabCustomers').classList.toggle('on', name === 'customers');
+    for (const [n, v, t] of [['pending', 'pendingView', 'tabPending'], ['customers', 'customersView', 'tabCustomers'],
+                              ['revenue', 'revenueView', 'tabRevenue'], ['log', 'logView', 'tabLog']]) {
+      $(v).classList.toggle('hidden', name !== n);
+      $(t).classList.toggle('on', name === n);
+    }
   }
 
   $('signin').addEventListener('click', signIn);
@@ -330,6 +585,8 @@
   $('refresh').addEventListener('click', load);
   $('tabPending').addEventListener('click', () => showTab('pending'));
   $('tabCustomers').addEventListener('click', () => showTab('customers'));
+  $('tabRevenue').addEventListener('click', () => showTab('revenue'));
+  $('tabLog').addEventListener('click', () => showTab('log'));
   $('search').addEventListener('input', renderCustomers);
 </script>
 </body>
