@@ -1,1 +1,1 @@
-{"version":"1.0.6","build":7,"min_build":1,"url":"https://github.com/ilaalo-app-so/ILAALO/releases/latest/download/ilaalo.apk","notes":"Faster and more stable. No more USSD collisions when an SMS arrives. Balance checks never pause. Faster recovery after errors."}
+{"version":"1.0.7","build":8,"min_build":1,"url":"https://github.com/ilaalo-app-so/ILAALO/releases/latest/download/ilaalo.apk","notes":"Fix: renewals now reach the admin. You can renew any time, and your remaining days are kept."}
